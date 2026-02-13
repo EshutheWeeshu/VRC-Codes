@@ -1,0 +1,425 @@
+#include "main.h"
+#include "lemlib/api.hpp" // IWYU pragma: keep
+#include "lemlib/chassis/chassis.hpp"
+#include "pros/adi.h"
+#include "pros/motors.h"
+//#include "path1try.txt"
+
+// controller
+pros::Controller controller(pros::E_CONTROLLER_MASTER);
+
+// motor groups
+pros::MotorGroup leftMotors({-14, -13, -12},
+                            pros::MotorGearset::blue); // left motor group - ports 3 (reversed), 4, 5 (reversed)
+pros::MotorGroup rightMotors({18, 19, 20}, pros::MotorGearset::blue); // right motor group - ports 6, 7, 9 (reversed)
+
+// Drive power helper
+inline void setDrivePower(double left, double right) {
+    leftMotors.move(left);
+    rightMotors.move(right);
+
+}
+
+// Inertial Sensor on port 16
+pros::Imu imu(16);
+
+
+pros::Rotation verticalEnc(-11);
+
+pros::Motor intakeBottom(10, pros::MotorGearset::blue);
+pros::Motor intakeMiddle(-1, pros::MotorGearset::blue);
+pros::Motor intakeFlex(-9, pros::MotorGearset::blue);
+
+pros::ADIDigitalOut gate_left('E');
+pros::ADIDigitalOut gate_right('C');
+pros::ADIDigitalOut scraper('A');
+pros::ADIDigitalOut descore('B');
+pros::ADIDigitalOut mdescore('D');
+
+
+class Odom {
+Odom();
+public:
+    void driveTo(double targetX, double targetY,
+                 double targetHeadingDeg,
+                 double maxTimeSeconds,bool reverse);
+
+    double xPos;
+    double yPos;
+    double headingRad;
+
+
+private:
+    // Odometry helpers
+    double getLeftDeg() const;
+    double getRightDeg() const;
+
+    double lastLeftDeg;
+    double lastRightDeg;
+    std::uint32_t lastUpdateMs;
+};
+
+
+lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_275, -1);
+
+
+// drivetrain settings
+lemlib::Drivetrain drivetrain(&leftMotors, // left motor group
+                              &rightMotors, // right motor group
+                              11.5, // 10 inch track width
+                              lemlib::Omniwheel::NEW_325, // using new 4" omnis
+                              450, // drivetrain rpm is 360
+                              2 // horizontal drift is 2. If we had traction wheels, it would have been 8
+);
+
+// lateral motion controller
+lemlib::ControllerSettings linearController(10, // proportional gain (kP)
+                                            0, // integral gain (kI)
+                                            3, // derivative gain (kD)
+                                            3, // anti windup
+                                            1, // small error range, in inches
+                                            100, // small error range timeout, in milliseconds
+                                            3, // large error range, in inches
+                                            500, // large error range timeout, in milliseconds
+                                            10 // maximum acceleration (slew)
+);
+
+// angular motion controller
+lemlib::ControllerSettings angularController(2, // proportional gain (kP)
+                                             0, // integral gain (kI)
+                                             10, // derivative gain (kD)
+                                             3, // anti windup
+                                             1, // small error range, in degrees
+                                             100, // small error range timeout, in milliseconds
+                                             3, // large error range, in degrees
+                                             500, // large error range timeout, in milliseconds
+                                             0 // maximum acceleration (slew)
+);
+
+// sensors for odometry
+lemlib::OdomSensors sensors(&vertical, // vertical tracking wheel
+                            nullptr, // vertical tracking wheel 2, set to nullptr as we don't have a second one
+                            nullptr, // horizontal tracking wheel
+                            nullptr, // horizontal tracking wheel 2, set to nullptr as we don't have a second one
+                            &imu // inertial sensor
+);
+
+
+
+
+extern pros::ADIDigitalOut gate_left;
+extern pros::ADIDigitalOut gate_right;
+extern pros::ADIDigitalOut scraper;
+extern pros::ADIDigitalOut descore;
+extern pros::ADIDigitalOut mdescore;
+
+// create the chassis
+lemlib::Chassis chassis(drivetrain, linearController, angularController, sensors);
+
+#include <cmath>
+
+
+void initialize() {
+    pros::lcd::initialize(); 
+    chassis.calibrate(); 
+
+    pros::Task screenTask([&]() {
+        while (true) {
+            // print robot location to the brain screen
+            pros::lcd::print(0, "X: %f", chassis.getPose().x); // x
+            pros::lcd::print(1, "Y: %f", chassis.getPose().y); // y
+            pros::lcd::print(2, "Theta: %f", chassis.getPose().theta); // heading
+            // log position telemetry
+            lemlib::telemetrySink()->info("Chassis pose: {}", chassis.getPose());
+            // delay to save resources
+            pros::delay(50);
+        }
+    });
+}
+
+
+void disabled() {}
+
+
+void competition_initialize() {}
+
+// get a path used for pure pursuit
+// this needs to be put outside a function
+// '.' replaced with "_" to make c++ happy
+
+
+
+
+void autonomous() {
+	chassis.setPose(-8,30,0);
+    intakeBottom.move(1000);
+    intakeMiddle.move(1000);
+    intakeFlex.move(-1000);
+	descore.set_value(true);
+    mdescore.set_value(false);
+    chassis.setBrakeMode(pros::E_MOTOR_BRAKE_BRAKE);
+
+    chassis.moveToPoint(-14, 50, 2000,{.maxSpeed = 90, .minSpeed = 0.1});
+    pros::delay(330);
+    scraper.set_value(true);
+    pros::delay(50);
+    
+    chassis.turnToHeading(-128, 1500, {.maxSpeed = 89});
+    chassis.waitUntilDone();
+    chassis.moveToPoint(-9 , 64, 1000,{.forwards=false, .maxSpeed = 90, .minSpeed = 0.1});
+    chassis.waitUntilDone();
+    intakeBottom.move(-70);
+    intakeMiddle.move(-70);
+    intakeFlex.move(100);
+    pros::delay(200);
+    intakeBottom.move(100);
+    intakeMiddle.move(100);
+    pros::delay(1200);
+	intakeBottom.move(95);
+	intakeMiddle.move(90);
+    chassis.waitUntilDone();
+ 
+    
+    pros::delay(1200);
+    intakeFlex.move(-200);
+
+    chassis.moveToPoint(-41.2, 33, 2000,{.maxSpeed = 90, .minSpeed = 0.1});
+    chassis.waitUntilDone();
+    pros::delay(200);
+    chassis.turnToHeading(-178, 1500, {.maxSpeed = 89});
+    chassis.waitUntilDone();
+    pros::delay(200);
+    chassis.moveToPoint(-45.1, 17, 1000,{.maxSpeed = 70, .minSpeed = 0.1});
+    chassis.waitUntilDone();
+    gate_left.set_value(false);
+	gate_right.set_value(false);
+    pros::delay(350);
+    chassis.moveToPoint(-45.2, 46, 1000,{.forwards=false,.maxSpeed = 90, .minSpeed = 0.1});
+    chassis.waitUntilDone();
+
+    pros::delay(200);
+
+    gate_left.set_value(true);
+    gate_right.set_value(true);
+
+    
+
+    // scraper.set_value(false);
+    // chassis.waitUntilDone();
+    // pros::delay(1);
+    // gate_left.set_value(true);
+    // chassis.waitUntilDone();
+    // pros::delay(1);
+    // gate_right.set_value(true);
+    // chassis.waitUntilDone();
+    // pros::delay(1000);
+    // chassis.waitUntilDone();
+    // pros::delay(1);
+    // gate_left.set_value(false);
+    // chassis.waitUntilDone();
+    // pros::delay(1);
+    // gate_right.set_value(false);
+    // chassis.moveToPoint(-11, 23, 1000,{.maxSpeed = 90, .minSpeed = 0.1});
+    // chassis.turnToHeading(88, 500, {.maxSpeed = 89});
+    // chassis.moveToPoint(-30, 24, 1000,{.forwards = false ,.maxSpeed = 70});
+   
+    // while(true){
+	// 	if(chassis.getPose().y < 24){
+	// 		chassis.moveToPoint(-30, 24, 5000,{.forwards=false, .maxSpeed=90});
+			
+	// 	}
+	// 	else{
+	// 		leftMotors.move(0);
+	// 		rightMotors.move(0);
+	// 	}
+	// }
+
+}
+
+
+
+// Smooth exponential driver curve
+double driver_curve(double value) {
+    if (fabs(value) < 1) {
+        return 0;
+    }
+    return (value / 127.0) * (value / 127.0) * (value / 127.0) * 127.0;
+}
+
+// Acceleration ramping (slew rate limiter)
+double ramp(double prev, double target, double step) {
+    if (target > prev + step) {
+        return prev + step;
+    } else if (target < prev - step) {
+        return prev - step;
+    } else {
+        return target;
+    }
+}
+
+void opcontrol() {
+    // Toggle state variables
+    int Intake = 1;
+    int Top_intake = 1;
+    int scrape = 1;
+    int wing = 1;
+    int gate = 1;
+    int top_scoring = 1;
+    int bottom_scoring = 1;
+    int jsn = 1;
+
+    // Velocity scaling
+    double Drive_velocity = 1.0;
+    double Turn_velocity = 0.7;
+
+    // Ramping variables
+    double left_prev = 0;
+    double right_prev = 0;
+    double ramp_step = 10.0;  // Fast response
+
+    while (true) {
+        // Get raw joystick inputs
+        double raw_fwd = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+        double raw_turn = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
+
+        // Apply driver curve to forward (smooth exponential)
+        double fwd = driver_curve(raw_fwd) * Drive_velocity;
+
+        // Turn is NORMAL (no curve, no ramp for responsiveness)
+        double turn = raw_turn * Turn_velocity;
+
+        // Deadzone
+        if (fabs(raw_fwd) < 1) fwd = 0;
+        if (fabs(raw_turn) < 1) turn = 0;
+
+        // Arcade mixing
+        double target_left = fwd + turn;
+        double target_right = fwd - turn;
+
+        // Apply ramping ONLY to forward component
+        double left_power = ramp(left_prev, target_left, ramp_step);
+        double right_power = ramp(right_prev, target_right, ramp_step);
+
+        left_prev = left_power;
+        right_prev = right_power;
+
+        // Stop if no input
+        if (fwd == 0 && turn == 0) {
+            setDrivePower(0, 0);
+        } else {
+            setDrivePower(left_power, right_power);
+        }
+
+        // ========== BUTTON MAPPINGS ==========
+
+        // L1 - Top scoring (reverse all + gate open)
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) {
+            if (top_scoring == 1) {
+                intakeFlex.move(-127);
+                gate_left.set_value(true);
+                gate_right.set_value(true);
+                intakeBottom.move(127);
+                intakeMiddle.move(127);
+                top_scoring = 2;
+                Intake = 2;
+            } else {
+                intakeFlex.move(0);
+                gate_right.set_value(false);
+                gate_left.set_value(false);
+                intakeBottom.move(0);
+                intakeMiddle.move(0);
+                top_scoring = 1;
+                Intake = 1;
+            }
+        }
+
+        // L2 - Bottom scoring (forward flex, pulse bottom/middle)
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2)) {
+            if (bottom_scoring == 1) {
+                gate_left.set_value(true);
+                gate_right.set_value(true);
+                intakeFlex.move(127);
+                intakeBottom.move(-127);
+                intakeMiddle.move(-127);
+                pros::delay(200);  // 0.2 second pulse
+                intakeBottom.move(127);
+                intakeMiddle.move(127);
+                bottom_scoring = 2;
+            } else {
+                intakeFlex.move(0);
+                gate_left.set_value(false);
+                gate_right.set_value(false);
+                intakeBottom.move(0);
+                intakeMiddle.move(0);
+                bottom_scoring = 1;
+            }
+        }
+
+        // R2 - Reverse all intakes (outtake)
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)) {
+            if (Intake == 1) {
+                intakeBottom.move(127);
+                intakeMiddle.move(127);
+                intakeFlex.move(-127);
+                gate_left.set_value(false);
+                gate_right.set_value(false);
+                Intake = 2;
+            } else {
+                intakeBottom.move(0);
+                intakeMiddle.move(0);
+                intakeFlex.move(0);
+                Intake = 1;
+            }
+        }
+
+        // A - Forward all intakes
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) {
+            if (Intake == 1) {
+                intakeBottom.move(-127);
+                intakeMiddle.move(-127);
+                intakeFlex.move(127);
+                Intake = 2;
+            } else {
+                intakeBottom.move(0);
+                intakeMiddle.move(0);
+                intakeFlex.move(0);
+                Intake = 1;
+            }
+        }
+
+        // X - Scraper toggle
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_X)) {
+            if (scrape == 1) {
+                scraper.set_value(true);
+                scrape = 2;
+            } else {
+                scraper.set_value(false);
+                scrape = 1;
+            }
+        }
+
+        // R1 - Descore wing toggle
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) {
+            if (wing == 1) {
+                descore.set_value(false);
+                wing = 2;
+            } else {
+                descore.set_value(true);
+                wing = 1;
+            }
+        }
+
+        // B - Gate toggle
+        if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_B)) {
+            if (jsn == 1) {
+                mdescore.set_value(true);
+                jsn = 2;
+            } else {
+                mdescore.set_value(false);
+                jsn = 1;
+            }
+        }
+
+        pros::delay(10);  // 10ms loop (100Hz)
+    }
+}
